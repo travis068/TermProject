@@ -44,8 +44,9 @@ export function LogInForm({ className, ...props }) {
 
     async function onSubmit(data) {
         setIsLoading(true);
+        console.log(data.email);
         await logIn(data.email, data.password);
-        window.location.href = `/logIn/${data.email}/financeDetails`;
+        window.location.href = `/logIn/${encodeURIComponent(data.email)}/financeDetails`;
     }
 
     return (

@@ -6,7 +6,7 @@ export const signUp = async (email, password, firstName, lastName) => {
         last_name: lastName,
     };
     const resp = await fetch(
-        `https://sfud06xrh5.execute-api.us-east-1.amazonaws.com/production/signIn`,
+        `https://i501h7k2bg.execute-api.us-east-1.amazonaws.com/prod/signUp`,
         {
             method: "post",
             body: JSON.stringify(body),
@@ -47,7 +47,7 @@ export const logIn = async (email, password) => {
         password: password,
     };
     const resp = await fetch(
-        `https://sfud06xrh5.execute-api.us-east-1.amazonaws.com/production/logIn`,
+        `https://i501h7k2bg.execute-api.us-east-1.amazonaws.com/prod/logIn`,
         {
             method: "post",
             body: JSON.stringify(body),
@@ -69,7 +69,7 @@ export const getFinanceDetails = async (email) => {
         email: email,
     };
     const resp = await fetch(
-        `https://sfud06xrh5.execute-api.us-east-1.amazonaws.com/production/get`,
+        `https://i501h7k2bg.execute-api.us-east-1.amazonaws.com/prod/getData`,
         {
             method: "post",
             body: JSON.stringify(body),
@@ -80,7 +80,7 @@ export const getFinanceDetails = async (email) => {
     );
     try {
         const data = await resp.json();
-        return data;
+        return data.body;
     } catch (err) {
         console.log("err", err);
     }
@@ -97,7 +97,7 @@ export const addFinanceDetails = async (email, entry_date, account, budget, groc
         savings: savings,
     };
     const resp = await fetch(
-        `https://sfud06xrh5.execute-api.us-east-1.amazonaws.com/production/details`,
+        `https://i501h7k2bg.execute-api.us-east-1.amazonaws.com/prod/addData`,
         {
             method: "post",
             body: JSON.stringify(body),

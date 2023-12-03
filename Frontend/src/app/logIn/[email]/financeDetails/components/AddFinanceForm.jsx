@@ -55,7 +55,7 @@ export function AddFinanceForm({ className, email, ...props }) {
     async function onSubmit(data) {
         setIsLoading(true);
         await addFinanceDetails(email, data.date, data.account, data.budget, data.groceries, data.shopping, data.savings);
-        window.location.href = `/logIn/${email}/financeDetails`;
+        window.location.href = `/logIn/${encodeURIComponent(email)}/financeDetails`;
     }
 
     return (

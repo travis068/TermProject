@@ -46,6 +46,7 @@ export function SignUpForm({ className, ...props }) {
 
     async function onSubmit(data) {
         setIsLoading(true);
+        console.log(data.email, data.password, data.last_name, data.first_name)
         await signUp(data.email, data.password, data.last_name, data.first_name);
         window.location.href = `/logIn`;
     }

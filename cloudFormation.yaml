@@ -1,0 +1,628 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CF script for DynamoDB, SNSTopic, lambda Function and API gateway with CORS enabled.'
+
+Resources:
+  UserTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: Users_Table
+      AttributeDefinitions:
+        - AttributeName: "email"
+          AttributeType: "S"
+      KeySchema:
+        - AttributeName: "email"
+          KeyType: "HASH"
+      ProvisionedThroughput:
+        ReadCapacityUnits: 5
+        WriteCapacityUnits: 5
+  UserFinanceTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: Users_Finance_Table
+      AttributeDefinitions:
+        - AttributeName: "email"
+          AttributeType: "S"
+        - AttributeName: "entry_date"
+          AttributeType: "S"
+      KeySchema:
+        - AttributeName: "email"
+          KeyType: "HASH"
+        - AttributeName: "entry_date"
+          KeyType: "RANGE"
+      ProvisionedThroughput:
+        ReadCapacityUnits: 5
+        WriteCapacityUnits: 5
+
+  MySNSTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: "AdminNotified"
+      Subscription:
+        - Endpoint: "rb618118@dal.ca"
+          Protocol: email
+
+  Lambda1:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      Handler: index.lambda_handler
+      FunctionName: signUpUsers
+      Role: arn:aws:iam::686634900890:role/LabRole
+      Runtime: python3.11
+      Timeout: 30
+      MemorySize: 128
+      Code:
+        ZipFile: |
+          import hashlib
+          import json
+          import boto3
+          import os 
+
+          # AWS Credentials
+          AWS_REGION =  os.environ['AWSREGION']
+
+          # DynamoDB database name
+          DYNAMO_DB_NAME = os.environ['DYNAMODBNAME']
+
+          topic_arn = os.environ['topic_arn']
+
+          dynamodb = boto3.resource("dynamodb", region_name=AWS_REGION)
+          sns = boto3.client("sns", region_name=AWS_REGION)
+
+          def lambda_handler(event, context):
+
+              userCredentials = event
+
+              email = userCredentials.get('email')
+              password = userCredentials.get('password')
+              last_name = userCredentials.get('last_name')
+              first_name = userCredentials.get('first_name')
+
+              if not email or not password or not last_name or not first_name:
+                  return {
+                      'statusCode': 400,
+                      'body': json.dumps('Missing required attributes'),
+                      'headers': {
+                          "Access-Control-Allow-Headers": "*",
+                          "Access-Control-Allow-Methods": "*",
+                          "Access-Control-Allow-Origin": "*",
+                          "Access-Control-Allow-Credentials" : True
+                      }
+                  }
+
+              table = dynamodb.Table(DYNAMO_DB_NAME)
+
+              table.put_item(
+                  Item={
+                      'email': email,
+                      'password': hashlib.sha256(password.encode('utf-8')).hexdigest(),
+                      'lastName': last_name,
+                      'firstName': first_name
+                  }
+              )
+
+              message = "A new user has been added!"
+
+              sns.publish(TopicArn=topic_arn, Message=message)
+
+              return {
+                  'statusCode': 200,
+                  'body': json.dumps('User data added to DynamoDB'),
+                  'headers': {
+                      "Access-Control-Allow-Headers": "*",
+                      "Access-Control-Allow-Methods": "*",
+                      "Access-Control-Allow-Origin": "*",
+                      "Access-Control-Allow-Credentials" : True
+                  }
+              }
+      Environment:
+        Variables:
+          AWSREGION: 'us-east-1'
+          DYNAMODBNAME: !Ref UserTable
+          topic_arn: !Ref MySNSTopic
+
+  Lambda2:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      Handler: index.lambda_handler
+      FunctionName: addDetails
+      Role: arn:aws:iam::686634900890:role/LabRole
+      Runtime: python3.11
+      Timeout: 30
+      MemorySize: 128
+      Code:
+         ZipFile: |
+           import json
+           import boto3
+           import os
+
+           # AWS Credentials
+           AWS_REGION =  os.environ['AWSREGION']
+
+           # DynamoDB database name
+           DYNAMO_DB_NAME = os.environ['DYNAMODBNAME']
+
+           dynamodb = boto3.resource("dynamodb", region_name=AWS_REGION)
+
+
+           def lambda_handler(event, context):
+               user_data = event
+
+               partition_key = user_data.get('email')
+               sort_key = user_data.get('entry_date')
+               print(partition_key)
+               print(sort_key)
+
+               try:
+                   table = dynamodb.Table(DYNAMO_DB_NAME)
+
+                   user_data.pop('email', None)
+                   user_data.pop('entry_date', None)
+
+                   response = table.put_item(
+                       Item={
+                           'email': partition_key,
+                           'entry_date': sort_key,
+                           **user_data
+                       }
+                   )
+
+                   return {
+                       'statusCode': 200,
+                       'body': json.dumps('Item added to DynamoDB successfully')
+                   }
+
+               except Exception as e:
+                   return {
+                       'statusCode': 500,
+                       'body': json.dumps(f'Error: {str(e)}')
+                   }
+      Environment:
+        Variables:
+          AWSREGION: 'us-east-1'
+          DYNAMODBNAME: !Ref UserFinanceTable
+
+  Lambda3:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      Handler: index.lambda_handler
+      FunctionName: getDetails
+      Role: arn:aws:iam::686634900890:role/LabRole
+      Runtime: python3.11
+      Timeout: 30
+      MemorySize: 128
+      Code:
+         ZipFile: |
+           import json
+           import boto3
+           import os
+
+           # AWS Credentials
+           AWS_REGION =  os.environ['AWSREGION']
+
+           # DynamoDB database name
+           DYNAMO_DB_NAME = os.environ['DYNAMODBNAME']
+
+           dynamodb = boto3.resource("dynamodb", region_name=AWS_REGION)
+
+
+           def lambda_handler(event, context):
+               try:
+                   data = event
+                   partition_key_value = data.get('email')
+                   print(partition_key_value)
+
+                   table = dynamodb.Table(DYNAMO_DB_NAME)
+
+                   # Perform the DynamoDB get operation
+                   response = table.query(
+                       KeyConditionExpression='email = :val',
+                       ExpressionAttributeValues={
+                           ':val': partition_key_value
+                       }
+                   )
+
+                   # Check if the item was found
+                   if 'Items' in response and response['Items']:
+                       item = response['Items']
+                       return {
+                           'statusCode': 200,
+                           'body': json.dumps(item)
+                       }
+                   else:
+                       return {
+                           'statusCode': 404,
+                           'body': json.dumps(response['Items'])
+                       }
+
+               except Exception as e:
+                   return {
+                       'statusCode': 500,
+                       'body': json.dumps(f'Error: {str(e)}')
+                   }
+      Environment:
+        Variables:
+          AWSREGION: 'us-east-1'
+          DYNAMODBNAME: !Ref UserFinanceTable
+
+  Lambda4:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      Handler: index.lambda_handler
+      FunctionName: logInUser
+      Role: arn:aws:iam::686634900890:role/LabRole
+      Runtime: python3.11
+      Timeout: 30
+      MemorySize: 128
+      Code:
+         ZipFile: |
+           import hashlib
+           import json
+           import boto3
+           from boto3.dynamodb.conditions import Key
+           import os
+
+           # AWS Credentials
+           AWS_REGION =  os.environ['AWSREGION']
+
+           # DynamoDB database name
+           DYNAMO_DB_NAME = os.environ['DYNAMODBNAME']
+
+           dynamodb = boto3.resource("dynamodb", region_name=AWS_REGION)
+
+
+           def lambda_handler(event, context):
+               login_data = event
+
+               email = login_data.get('email')
+               password = login_data.get('password')
+
+               if not email or not password:
+                   return {
+                       'statusCode': 400,
+                       'body': json.dumps('Missing required attributes')
+                   }
+
+               table = dynamodb.Table(DYNAMO_DB_NAME)
+
+               response = table.query(
+                   KeyConditionExpression=Key('email').eq(email)
+               )
+
+               if 'Items' in response and response['Items']:
+                   user = response['Items'][0]
+                   if user['password'] == hashlib.sha256(password.encode('utf-8')).hexdigest():
+                       return {
+                           'statusCode': 200,
+                           'body': json.dumps({
+                               'email': user['email'],
+                               'last_name': user['lastName'],
+                               'first_name': user['firstName']
+                           })
+                       }
+                   else:
+                       return {
+                           'statusCode': 401,
+                           'body': json.dumps('Incorrect password')
+                       }
+               else:
+                   return {
+                       'statusCode': 404,
+                       'body': json.dumps('User not found')
+                   }
+      Environment:
+         Variables:
+            AWSREGION: 'us-east-1'
+            DYNAMODBNAME: !Ref UserTable
+
+  Lambda1TestPermission:
+    Type: "AWS::Lambda::Permission"
+    Properties:
+      FunctionName: !Ref Lambda1
+      Action: "lambda:InvokeFunction"
+      Principal: "apigateway.amazonaws.com"
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGateway}/*/*"
+  Lambda2TestPermission:
+    Type: "AWS::Lambda::Permission"
+    Properties:
+      FunctionName: !Ref Lambda2
+      Action: "lambda:InvokeFunction"
+      Principal: "apigateway.amazonaws.com"
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGateway}/*/*"
+  Lambda3TestPermission:
+    Type: "AWS::Lambda::Permission"
+    Properties:
+      FunctionName: !Ref Lambda3
+      Action: "lambda:InvokeFunction"
+      Principal: "apigateway.amazonaws.com"
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGateway}/*/*"
+  Lambda4TestPermission:
+    Type: "AWS::Lambda::Permission"
+    Properties:
+      FunctionName: !Ref Lambda4
+      Action: "lambda:InvokeFunction"
+      Principal: "apigateway.amazonaws.com"
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGateway}/*/*"
+
+  ApiGateway:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: smartCashAPI
+
+  Test1Resource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ParentId: !GetAtt ApiGateway.RootResourceId
+      PathPart: "signUp"
+  Test2Resource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ParentId: !GetAtt ApiGateway.RootResourceId
+      PathPart: "addData"
+  Test3Resource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ParentId: !GetAtt ApiGateway.RootResourceId
+      PathPart: "getData"
+  Test4Resource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ParentId: !GetAtt ApiGateway.RootResourceId
+      PathPart: "logIn"
+
+  Options1Method:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref Test1Resource
+      HttpMethod: OPTIONS
+      Integration:
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              "method.response.header.Access-Control-Allow-Headers": "'Content-Type,X-Amz-Date,Authorization,X-Api-Key'"
+              "method.response.header.Access-Control-Allow-Methods": "'GET,POST,PUT,DELETE'"
+              "method.response.header.Access-Control-Allow-Origin": "'*'"
+            ResponseTemplates:
+              "application/json": ""
+        PassthroughBehavior: WHEN_NO_MATCH
+        RequestTemplates:
+          "application/json": '{"statusCode": 200}'
+        Type: MOCK
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            "method.response.header.Access-Control-Allow-Headers": true
+            "method.response.header.Access-Control-Allow-Methods": true
+            "method.response.header.Access-Control-Allow-Origin": true
+          ResponseModels:
+            "application/json": "Empty"
+  Options2Method:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref Test2Resource
+      HttpMethod: OPTIONS
+      Integration:
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              "method.response.header.Access-Control-Allow-Headers": "'Content-Type,X-Amz-Date,Authorization,X-Api-Key'"
+              "method.response.header.Access-Control-Allow-Methods": "'GET,POST,PUT,DELETE'"
+              "method.response.header.Access-Control-Allow-Origin": "'*'"
+            ResponseTemplates:
+              "application/json": ""
+        PassthroughBehavior: WHEN_NO_MATCH
+        RequestTemplates:
+          "application/json": '{"statusCode": 200}'
+        Type: MOCK
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            "method.response.header.Access-Control-Allow-Headers": true
+            "method.response.header.Access-Control-Allow-Methods": true
+            "method.response.header.Access-Control-Allow-Origin": true
+          ResponseModels:
+            "application/json": "Empty"
+  Options3Method:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref Test3Resource
+      HttpMethod: OPTIONS
+      Integration:
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              "method.response.header.Access-Control-Allow-Headers": "'Content-Type,X-Amz-Date,Authorization,X-Api-Key'"
+              "method.response.header.Access-Control-Allow-Methods": "'GET,POST,PUT,DELETE'"
+              "method.response.header.Access-Control-Allow-Origin": "'*'"
+            ResponseTemplates:
+              "application/json": ""
+        PassthroughBehavior: WHEN_NO_MATCH
+        RequestTemplates:
+          "application/json": '{"statusCode": 200}'
+        Type: MOCK
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            "method.response.header.Access-Control-Allow-Headers": true
+            "method.response.header.Access-Control-Allow-Methods": true
+            "method.response.header.Access-Control-Allow-Origin": true
+          ResponseModels:
+            "application/json": "Empty"
+  Options4Method:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref Test4Resource
+      HttpMethod: OPTIONS
+      Integration:
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              "method.response.header.Access-Control-Allow-Headers": "'Content-Type,X-Amz-Date,Authorization,X-Api-Key'"
+              "method.response.header.Access-Control-Allow-Methods": "'GET,POST,PUT,DELETE'"
+              "method.response.header.Access-Control-Allow-Origin": "'*'"
+            ResponseTemplates:
+              "application/json": ""
+        PassthroughBehavior: WHEN_NO_MATCH
+        RequestTemplates:
+          "application/json": '{"statusCode": 200}'
+        Type: MOCK
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            "method.response.header.Access-Control-Allow-Headers": true
+            "method.response.header.Access-Control-Allow-Methods": true
+            "method.response.header.Access-Control-Allow-Origin": true
+          ResponseModels:
+            "application/json": "Empty"
+
+  Test1Method:
+    Type: "AWS::ApiGateway::Method"
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref Test1Resource
+      AuthorizationType: NONE
+      HttpMethod: POST
+      Integration:
+        Type: AWS
+        IntegrationHttpMethod: POST
+        Uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${Lambda1.Arn}/invocations"
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseTemplates:
+              application/json: $input.json('$')
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,POST,PUT,DELETE,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+        RequestTemplates:
+          application/json: $input.json('$')
+      RequestParameters:
+        method.request.querystring.name: false
+      MethodResponses:
+        - ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+          StatusCode: "200"
+  Test2Method:
+    Type: "AWS::ApiGateway::Method"
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref Test2Resource
+      AuthorizationType: NONE
+      HttpMethod: POST
+      Integration:
+        Type: AWS
+        IntegrationHttpMethod: POST
+        Uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${Lambda2.Arn}/invocations"
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseTemplates:
+              application/json: $input.json('$')
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,POST,PUT,DELETE,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+        RequestTemplates:
+          application/json: $input.json('$')
+      RequestParameters:
+        method.request.querystring.name: false
+      MethodResponses:
+        - ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+          StatusCode: "200"
+  Test3Method:
+    Type: "AWS::ApiGateway::Method"
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref Test3Resource
+      AuthorizationType: NONE
+      HttpMethod: POST
+      Integration:
+        Type: AWS
+        IntegrationHttpMethod: POST
+        Uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${Lambda3.Arn}/invocations"
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseTemplates:
+              application/json: $input.json('$')
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,POST,PUT,DELETE,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+        RequestTemplates:
+          application/json: $input.json('$')
+      RequestParameters:
+        method.request.querystring.name: false
+      MethodResponses:
+        - ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+          StatusCode: "200"
+  Test4Method:
+    Type: "AWS::ApiGateway::Method"
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref Test4Resource
+      AuthorizationType: NONE
+      HttpMethod: POST
+      Integration:
+        Type: AWS
+        IntegrationHttpMethod: POST
+        Uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${Lambda4.Arn}/invocations"
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseTemplates:
+              application/json: $input.json('$')
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,POST,PUT,DELETE,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+        RequestTemplates:
+          application/json: $input.json('$')
+      RequestParameters:
+        method.request.querystring.name: false
+      MethodResponses:
+        - ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+          StatusCode: "200"
+
+  ApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - Test1Method
+      - Test2Method
+      - Test3Method
+      - Test4Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+
+  ApiStage:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      RestApiId: !Ref ApiGateway
+      DeploymentId: !Ref ApiDeployment
+      StageName: prod
+      Description: Production Stage
+
+# Outputs for the project
+Outputs:
+  APIGatewayURL:
+    Description: "API Gateway URL"
+    Value: !Sub "https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/prod"
